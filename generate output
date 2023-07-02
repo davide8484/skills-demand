@@ -1,0 +1,211 @@
+rm(list=ls())
+library(zoo)
+library(tidyverse)
+library(scales)
+library(lubridate)
+library(forecast)
+library(MASS)
+`%notin%` <- Negate(`%in%`)
+
+#-------------------------------------------------------------------------------
+
+# Generate figure 1. 
+
+#-------------------------------------------------------------------------------
+
+datout <- read.csv('skill_class_mentions_monthly.csv')
+datout$date <- as_date(datout$date)
+
+datout %>% 
+  mutate(across(skill_lab, factor, levels = c('Interpersonal', 'Analytical', 'Digital', 'Manual'))) %>%
+  mutate(avg_value = 100 * avg_value, 
+         point_forecast = 100 * point_forecast, 
+         high = 100*high, 
+         low = 100*low, 
+         high80 = 100*high80, 
+         low80 = 100*low80, 
+  ) %>%
+  ggplot() + 
+  geom_line(aes(x = date, y = avg_value)) + 
+  geom_line(aes(x = date, y = point_forecast), colour = 'blue') + 
+  #geom_line(aes(x = date, y = low), colour='blue', linetype = 2) + 
+  geom_ribbon(aes(x = date, y = point_forecast, ymin = low, ymax = high), linetype = 3, alpha = 0.1, colour = 'blue', fill='blue') +
+  geom_ribbon(aes(x = date, y = point_forecast, ymin = low80, ymax = high80), linetype = 3, alpha = 0.25, colour = 'blue', fill='blue') +
+  geom_vline(xintercept = as_date('2020-04-15'), alpha = 0.5, linetype = 2) +
+  facet_wrap(vars(skill_lab), scales = 'free_y', nrow=3) + 
+  theme_bw() + 
+  theme(text = element_text(size = 20),
+        axis.text = element_text(size = 20),
+        panel.grid.minor = element_blank()) + 
+  labs(x = NULL, y = NULL) + 
+  scale_x_date(breaks = "2 year", date_labels = "%Y", limits = as_date(c('2015-03-15', '2022-12-15'))) + 
+  scale_y_continuous(labels = scales::percent_format(scale = 1))
+
+
+#-------------------------------------------------------------------------------
+
+# Generate figure 2. 
+
+#-------------------------------------------------------------------------------
+
+sim <- read.csv('level2_esco_skill_mentions_monthly.csv')
+pre <- subset(sim, period=='pre_covid')
+post <- subset(sim, period=='post_covid')
+skills <- unique(sim$name)
+std_errs <- c()
+meanaggs <- c()
+actuals <- c()
+
+for (j in 1:length(skills)) {
+  
+  print(j)
+  skill <- skills[j]
+  dat <- subset(pre, name==skill)
+  datpred <- subset(post, name==skill)
+  mymodel <- ets(dat$avg_value)
+  myforecast <- forecast(mymodel, level=c(80, 95), h = length(datpred$date))
+  set.seed(2015)
+  nsim <- 1000
+  h <- length(post$date)
+  sim1 <- numeric(nsim)
+  for(i in seq_len(nsim))
+    sim1[i] <- mean(simulate(mymodel, future=TRUE, nsim=h)[28:33]) 
+  meanagg <- mean(sim1)
+  quantile(sim1, prob=c(0.33, 0.67))
+  std_err <- (quantile(sim1, prob=c(0.025, 0.975))[2] - quantile(sim1, prob=c(0.025, 0.975))[1])/(1.96*2)
+  
+  std_errs <- c(std_errs, std_err)
+  meanaggs <- c(meanaggs, meanagg)
+  actuals <- c(actuals, mean(datpred$avg_value))
+  
+}
+
+dist_dat <- data.frame(skills, predicted = meanaggs, sd = std_errs, actual = actuals) %>% 
+  mutate(distance = (actual - predicted) / sd)
+
+# Map the higher level skill groups:
+
+interpersonal <- c('advising_and_consulting', 
+                   'liaising_and_networking', 
+                   'negotiating', 
+                   'obtaining_information_verbally', 
+                   'presenting_information', 
+                   'promoting_selling_and_purchasing', 
+                   'teaching_and_training', 
+                   'working_with_others', 
+                   'counselling', 
+                   'providing_information_and_support_to_the_public_and_clients', 
+                   'building_and_developing_teams', 
+                   'leading_and_motivating', 
+                   'supervising_people')
+
+analytical <- c('analysing_and_evaluating_information_and_data', 
+                'calculating_and_estimating', 
+                'conducting_studies_investigations_and_examinations', 
+                'documenting_and_recording_information', 
+                'managing_information', 
+                'information_skills', 
+                'monitoring_developments_in_area_of_expertise', 
+                'monitoring_inspecting_and_testing', 
+                'measuring_physical_properties', 
+                'processing_information', 
+                'developing_objectives_and_strategies', 
+                'performing_administrative_duties', 
+                'making_decisions')
+
+digital <- c('accessing_and_analysing_digital_data',
+             'programming_computer_systems',
+             'setting_up_and_protecting_computer_systems',
+             'using_digital_tools_for_collaboration_content_creation_and_problem_solving',
+             'using_digital_tools_to_control_machinery',
+             'working_with_computers')
+
+dist_dat <- dist_dat %>% 
+  mutate(skill_high = NA, 
+         skill_high = ifelse(skills %in% digital, 'Digital', skill_high), 
+         skill_high = ifelse(skills %in% analytical, 'Analytical', skill_high), 
+         skill_high = ifelse(skills %in% interpersonal, 'Interpersonal', skill_high), 
+         skill_high = ifelse(is.na(skill_high)==TRUE, 'Manual', skill_high), 
+         distance = ifelse(is.nan(distance)==TRUE, 0, distance))
+
+dist_dat$distance <- dist_dat$actual - dist_dat$predicted
+
+dist_dat %>% 
+  mutate(skills = chartr("_", " ", skills)) %>%
+  subset(abs((actual - predicted)/sd) > 1.28 & abs(actual - predicted) > 0.001) %>%
+  #subset(skill_high %in% c('Interpersonal', 'Digital', 'Analytical')) %>%
+  ggplot() + 
+  #geom_bar(aes(x = reorder(skills, distance), y = 100*distance, group=skill_high, colour=skill_high, fill=skill_high), stat='identity', position = 'dodge', alpha=0.7) + 
+  geom_point(aes(x = 100*predicted, y = reorder(skills, distance), colour=skill_high), size = 6) +
+  geom_point(aes(x = 100*actual, y = reorder(skills, distance), colour=skill_high), size = 6) +
+  geom_segment(aes(x = 100*predicted, y = reorder(skills, distance), xend = 100*actual, yend=reorder(skills, distance)), alpha=1, arrow = arrow(length = unit(0.3, "cm"), type='closed')) +
+  #geom_point(aes(x = 100*predicted, y = reorder(skills, distance)), size = 5, colour='blue') +
+  #coord_flip() + 
+  theme_bw() + 
+  labs(x = 'Predicted and actual demand (percentage points)', y = NULL) +
+  theme(legend.position = "bottom", 
+        legend.title = element_blank(), 
+        text = element_text(size=15)) 
+
+#-------------------------------------------------------------------------------
+
+# Generate figure 3. 
+
+#-------------------------------------------------------------------------------
+
+datout <- read.csv('skill_class_mentions_by_occupation.csv')
+wfh <- read.csv('wfh stats 2 digit anzsco.csv')
+datnew <- left_join(datout, wfh, by='label_2digit')
+datnew2 <- datnew %>% 
+  mutate(distance2 = 100*(actual - predicted))
+
+sks <- c('Interpersonal', 'Digital', 'Analytical', 'Manual')
+datnew3 <- c()
+
+for (i in 1:4) {
+  
+  sk <- sks[i]
+  mod <- rlm(distance2 ~ prop_wfh, data=subset(datnew2, skill==sk))
+  ou <- subset(datnew2, skill==sk)
+  ou$fitted <- mod$fitted.values
+  datnew3 <- rbind(datnew3, ou)
+  
+}
+
+datnew3 %>% 
+  ggplot() + 
+  geom_line(aes(x = prop_wfh, y = fitted), colour='blue', size=1) + 
+  geom_point(aes(x = prop_wfh, y = distance2), size=3, alpha=0.3, colour='blue') + 
+  geom_hline(yintercept=0, linetype=2, alpha = 0.5) +
+  facet_wrap(~factor(skill, levels=c('Interpersonal', 'Analytical', 'Digital', 'Manual')), scales='free_y') +
+  theme_bw() + 
+  theme(panel.grid.minor = element_blank(), 
+        text = element_text(size=18)) +
+  labs(x = 'Percentage working remotely', y='Actual less predicted demand (percentage points)')
+
+#-------------------------------------------------------------------------------
+
+# Generate figure 4. 
+
+#-------------------------------------------------------------------------------
+
+datout2 <- read.csv('skill_class_mentions_by_occupation.csv')
+
+datout2 %>% 
+  mutate(actual = ifelse(abs(distance)<1.28, NA, actual), 
+         predicted = ifelse(abs(distance)<1.28, NA, predicted),
+         `Actual less predicted (percentage points)` = 100*(actual-predicted)) %>%
+  mutate(across(skill, factor, levels = c('Interpersonal', 'Analytical', 'Digital', 'Manual'))) %>%
+  ggplot() + 
+  geom_tile(aes(x = skill, y = reorder(label_2digit, -num), fill = `Actual less predicted (percentage points)`)) + 
+  scale_fill_gradient2(low = 'red', mid = "white", high="blue", midpoint = 0) + 
+  ggforce::facet_col(facets = vars(reorder(label_1digit, num)), 
+                     scales = "free_y", 
+                     space = "free") +
+  scale_x_discrete(labels = function(x) 
+    stringr::str_wrap(x, width = 15)) + 
+  theme_bw() + 
+  labs(x = NULL, y = NULL) + 
+  scale_x_discrete(expand = c(0, 0)) + 
+  theme(text = element_text(size=13), 
+        legend.position = 'bottom')
