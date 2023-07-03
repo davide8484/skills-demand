@@ -185,6 +185,28 @@ datnew3 %>%
 
 #-------------------------------------------------------------------------------
 
+# Get p-values for the weight b1 based on two-sided test:
+
+#-------------------------------------------------------------------------------
+
+mod <- rlm(distance2 ~ prop_wfh, data=subset(datnew2, skill=='Interpersonal'))
+summary(mod)
+pt(4.1967, 41, lower=FALSE)
+
+mod <- rlm(distance2 ~ prop_wfh, data=subset(datnew2, skill=='Digital'))
+summary(mod)
+pt(4.1667, 41, lower=FALSE)
+
+mod <- rlm(distance2 ~ prop_wfh, data=subset(datnew2, skill=='Analytical'))
+summary(mod)
+pt(2.9080, 41, lower=FALSE)
+
+mod <- rlm(distance2 ~ prop_wfh, data=subset(datnew2, skill=='Manual'))
+summary(mod)
+pt(0.8817, 41, lower=FALSE)
+
+#-------------------------------------------------------------------------------
+
 # Generate figure 4. 
 
 #-------------------------------------------------------------------------------
